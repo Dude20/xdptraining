@@ -191,30 +191,67 @@ static void stats_collect(int map_fd, __u32 map_type,
 	}
 }
 
-static void stats_poll(int map_fd, __u32 map_type, int interval)
+#ifndef PATH_MAX
+#define PATH_MAX	4096
+#endif
+const char *pin_basedir =  "/sys/fs/bpf";
+
+int filing(__u32* id_saved,  char* ifname, int* map_fd) 
 {
-	struct stats_record prev, record = { 0 };
+	__u32 len;
+	struct bpf_map_info new_info = { 0 };
+	int new_map_fd;
+	char pin_dir[PATH_MAX];
+
+	/* Use the --dev name as subdir for finding pinned maps */
+	len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, ifname);
+	if (len < 0) {
+		fprintf(stderr, "ERR: creating pin dirname\n");
+		return EXIT_FAIL_OPTION;
+	}
+	new_map_fd = open_bpf_map_file(pin_dir, "xdp_stats_map", &new_info);
+	if (new_map_fd < 0) {
+		return EXIT_FAIL_BPF;
+	}
+	if(*id_saved != new_info.id)
+	{
+		printf("\nFound new file with id %d instead of id %d\nReplacing fd.\nRefreshing id.\n",new_info.id, *id_saved);
+		*map_fd = new_map_fd;
+		*id_saved = new_info.id;
+		return 1;
+	}
+	return 0;
+}
+
+static int stats_poll(int map_fd, __u32 map_id, __u32 map_type, int interval, char* ifname)
+{
+	struct stats_record prev, record , reset = { 0 };
 
 	/* Trick to pretty printf with thousands separators use %' */
 	setlocale(LC_NUMERIC, "en_US");
 
 	/* Get initial reading quickly */
 	stats_collect(map_fd, map_type, &record);
+	
 	usleep(1000000/4);
 
 	while (1) {
+
 		prev = record; /* struct copy */
-		stats_collect(map_fd, map_type, &record);
+		if(filing(&map_id, ifname, &map_fd) == 1)
+		{
+			printf("Resetting records\n");
+			prev = reset;
+			record = reset; 
+		}
+		stats_collect(map_fd, map_type, &record);	
 		stats_print(&record, &prev);
 		sleep(interval);
 	}
+	
+	return EXIT_OK;
 }
 
-#ifndef PATH_MAX
-#define PATH_MAX	4096
-#endif
-
-const char *pin_basedir =  "/sys/fs/bpf";
 
 int main(int argc, char **argv)
 {
@@ -251,7 +288,7 @@ int main(int argc, char **argv)
 	if (stats_map_fd < 0) {
 		return EXIT_FAIL_BPF;
 	}
-
+	
 	/* check map info, e.g. datarec is expected size */
 	map_expect.key_size    = sizeof(__u32);
 	map_expect.value_size  = sizeof(struct datarec);
@@ -270,6 +307,6 @@ int main(int argc, char **argv)
 		       );
 	}
 
-	stats_poll(stats_map_fd, info.type, interval);
+	stats_poll(stats_map_fd, info.id, info.type, interval, cfg.ifname);
 	return EXIT_OK;
 }

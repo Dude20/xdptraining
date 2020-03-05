@@ -73,6 +73,8 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 	char map_filename[PATH_MAX];
 	char pin_dir[PATH_MAX];
 	int err, len;
+	struct bpf_map_info info = { 0 };
+	int stats_map_fd;
 
 	len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, subdir);
 	if (len < 0) {
@@ -85,6 +87,11 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 	if (len < 0) {
 		fprintf(stderr, "ERR: creating map_name\n");
 		return EXIT_FAIL_OPTION;
+	}
+
+	stats_map_fd = open_bpf_map_file(pin_dir, map_name, &info);
+	if (stats_map_fd < 0) {
+		return EXIT_FAIL_BPF;
 	}
 
 	/* Existing/previous XDP prog might not have cleaned up */
